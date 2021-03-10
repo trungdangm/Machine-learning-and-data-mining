@@ -1,0 +1,268 @@
+---
+title: "RFM score as input for K-means clustering"
+author: "Minh Trung DANG"
+date: "08/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readr)
+```
+
+```{r}
+data <- read_csv("customerFMCG.csv")
+```
+```{r}
+str(data)
+```
+
+Data desciption
+
+Invoice_No (Numeric): Invoice no for each transaction
+Stock_Code (Numeric): Unique stock code for the items
+Product_Category(Categorical):Product category details
+Invoice_Date(Numeric):Date on which invoice was generated
+Customer_ID (Numeric):Unique customer id 
+Amount (Numeric): Invoice Amount
+Country(Categorical):Country detail
+l_date(Numeric):Last date of invoice in 2011
+
+
+```{r}
+library(DataExplorer)
+```
+
+```{r}
+plot_missing(data)
+```
+
+```{r}
+head(data,10)
+```
+
+```{r}
+str(data)
+```
+
+```{r}
+library(dplyr)
+```
+
+Counting unique 
+```{r}
+n_distinct(data$Invoice_No) 
+```
+
+```{r}
+n_distinct(data$Stock_Code) 
+```
+
+```{r}
+data %>%
+  group_by(Product_Category) %>% 
+  count()
+```
+
+```{r}
+library(pander)
+library(ggplot2)
+library(scales)
+```
+
+```{r}
+df_category <- data %>% 
+  group_by(Product_Category) %>% 
+  summarise(Count =  n()) %>% 
+  arrange(-Count) %>% 
+  mutate(Percentage = round(Count*100/sum(Count),2),
+         label =  percent(Percentage/100))
+  
+
+df_category
+```
+
+
+```{r, fig.height= 5, fig.width = 6.5}
+ggplot(df_category,
+       aes(x = reorder(Product_Category, -Percentage), 
+           y = Percentage)) +
+  geom_bar(stat = "identity",
+           fill = "royalblue4",
+           width = 0.80) +
+  geom_text(aes(label = paste0(Percentage,"%")), 
+                               vjust = -0.3,
+                               size = 4,
+                               fontface = "bold") +
+  labs(x = "Category",
+       y = "Distribution of product category (%)") +
+  theme(axis.text = element_text(size = 12),
+        axis.title = element_text(size = 12, face = "bold"),
+        plot.caption = element_text(color = "grey44",size = 12,face = "italic"),
+        legend.text = element_text(colour="black", size = 12))
+```
+
+```{r}
+n_distinct(data$Customer_ID)
+```
+
+There are 3813 unique custmomers. 15335 unique invoice numbers. 
+
+
+```{r}
+head(data$l_Date)
+```
+
+```{r}
+data2 <- data %>% 
+  mutate(Invoice_Date =  as.Date(Invoice_Date, "%m/%d/%Y"))
+```
+
+```{r}
+str(data2)
+```
+
+```{r}
+data2 %>% 
+  group_by(Country) %>% 
+  count()
+```
+All these records belong to only one country. We will not neet this column.
+
+
+```{r}
+summary(data2$Amount)
+```
+
+
+```{r}
+hist(data2$Amount)
+```
+
+```{r}
+ ggplot(data2, aes(x="", y=Amount)) + 
+  geom_boxplot()
+```
+
+There are outliers. 
+
+```{r}
+data2 %>% 
+  group_by(l_Date) %>% 
+  count()
+```
+This columne is redandunt. 
+
+Building RFM model
+
+```{r}
+R_table <- aggregate(Invoice_Date ~ Customer_ID, data2, FUN = max)
+```
+
+```{r}
+data2 %>% 
+  group_by(Customer_ID) %>% 
+  summarise(max = max(Invoice_Date))
+```
+
+```{r}
+head(R_table)
+```
+
+```{r}
+NOW <- as.Date("2011-12-12", "%Y-%m-%d")
+NOW
+```
+
+
+```{r}
+R_table$R <- as.numeric(NOW - R_table$Invoice_Date)
+```
+
+```{r}
+head(R_table)
+```
+
+
+```{r}
+RFM_data <- data2 %>% 
+  group_by(Customer_ID) %>% 
+  summarise(Recency = as.numeric(NOW - max(Invoice_Date)),
+            Frequency = length(Invoice_Date),
+            Monetary = sum(Amount)) 
+```
+
+```{r}
+str(RFM_data)
+```
+
+
+```{r}
+head(RFM_data)
+```
+
+RFM scoring
+
+Rsegment 1 is very recent while Rsegment 5 is least recent
+
+In this step, scoring the RFM data is done by using the quantile method. The scoring is in a range of 1 to 5. 
+In a R segementm 1 is very recent whilke 5 is the least recent score.
+Fsegment 1 is least frequent while Fsegment 5 is most frequent
+
+```{r}
+RFM_data <- RFM_data %>% 
+  mutate(Rsegment = findInterval(Recency, quantile(Recency, c(0.0, 0.25, 0.50, 0.75, 1.0))),
+         Fsegment = findInterval(Frequency, quantile(Frequency, c(0.0, 0.25, 0.50, 0.75, 1.0))),
+         Msegment = findInterval(Monetary, quantile(Monetary, c(0.0, 0.25, 0.50, 0.75, 1.0))),
+         R_F_M = paste(Rsegment, Fsegment, Msegment),
+         Total_RFM_Score = c(Rsegment +  Fsegment + Msegment))
+
+```
+
+```{r}
+head(RFM_data)
+```
+
+To keep only selected variables from RFM data
+
+```{r}
+clus_df2 <- RFM_data[,c(5,6,7)]
+```
+
+
+
+Applying K-means
+
+```{r}
+set.seed(123)
+km2 <- kmeans(clus_df2, centers = 5, nstart = 30)
+```
+
+
+```{r}
+str(km2)	
+```
+```{r}
+library(factoextra)
+```
+
+```{r, fig.height= 7.5, fig.width= 7.5}
+fviz_cluster(km2, data = clus_df2)
+```
+
+
+```{r}
+finalclus2 <- cbind(clus_df2,km2$cluster)
+```
+
+```{r}
+finalclus2 %>% 
+  group_by(km2$cluster) %>% 
+  count()
+```
+
+
